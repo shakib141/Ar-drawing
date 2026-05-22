@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Perfect Pencil Sketch AR Tool - Real Shader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #0b0f19;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Glassmorphic Controls */
+        .controls {
+            width: 92%;
+            max-width: 500px;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 16px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            position: absolute;
+            top: 15px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+        }
+
+        .control-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        /* Glassy Buttons */
+        .btn {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            font-size: 14px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.4);
+            box-shadow: 0 4px 15px rgba(255, 255, 255, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .mode-btn.active {
+            background: rgba(16, 185, 129, 0.35); 
+            border-color: rgba(16, 185, 129, 0.6);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+
+        /* Custom Sliders */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            height: 6px;
+            border-radius: 5px;
+            outline: none;
+            width: 100px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(255,255,255,0.8);
+        }
+
+        label {
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Viewport Frame */
+        .view-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            background: #000;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        /* WebCam - STRICTLY UNMIRRORED */
+        #webcam {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        /* Canvas Wrapper for Zoom/Drag */
+        #interactive-container {
+            position: absolute;
+            left: 0;
+            top: 0;
+            transform-origin: center center;
+            z-index: 2;
+            cursor: move;
+            opacity: 0.5;
+            display: none;
+            will-change: transform;
+        }
+
+        #overlay-canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <div class="control-row">
+            <label class="btn">
+                <input type="file" id="image-loader" accept="image/*">
+                ছবি আপলোড করুন 🖼️
+            </label>
+
+            <label for="opacity-slider">
+                Opacity:
+                <input type="range" id="opacity-slider" min="0" max="1" step="0.05" value="0.5">
+            </label>
+        </div>
+
+        <div class="control-row">
+            <button id="btn-normal" class="btn mode-btn active">Normal Pic 🖼️</button>
+            <button id="btn-sketch" class="btn mode-btn">Line Drawing ✏️</button>
+            
+            <label id="sketch-label" for="sketch-slider" style="display: none;">
+                পেন্সিল শার্পনেস:
+                <input type="range" id="sketch-slider" min="1" max="10" step="1" value="3">
+            </label>
+        </div>
+    </div>
+
+    <div class="view-container" id="view-container">
+        <video id="webcam" autoplay playsinline></video>
+        
+        <div id="interactive-container">
+            <canvas id="overlay-canvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const imageLoader = document.getElementById('image-loader');
+        const interactiveContainer = document.getElementById('interactive-container');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const ctx = overlayCanvas.getContext('2d');
+        const opacitySlider = document.getElementById('opacity-slider');
+        const viewContainer = document.getElementById('view-container');
+        
+        const btnNormal = document.getElementById('btn-normal');
+        const btnSketch = document.getElementById('btn-sketch');
+        const sketchSlider = document.getElementById('sketch-slider');
+        const sketchLabel = document.getElementById('sketch-label');
+
+        let originalImage = null;
+        let currentMode = 'normal';
+        let isRendering = false; // ল্যাগ প্রতিরোধের ফ্ল্যাগ
+
+        // ১. সোজা রিয়েল ক্যামেরা চালু করা
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+            } catch (error) {
+                console.error(error);
+                alert("ক্যামেরা অন করা যায়নি!");
+            }
+        }
+
+        // ২. আল্ট্রা-অপ্টিমাইজড রিয়েল পেন্সিল স্কেচ ইঞ্জিন (৩ নম্বর ছবির মতো শেডিং দিতে সক্ষম)
+        function processPencilSketch(blurRadius) {
+            if (!originalImage || isRendering) return;
+            isRendering = true;
+
+            const w = originalImage.width;
+            const h = originalImage.height;
+            overlayCanvas.width = w;
+            overlayCanvas.height = h;
+
+            ctx.drawImage(originalImage, 0, 0, w, h);
+            const imgData = ctx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+
+            // দ্রুত প্রসেসিংয়ের জন্য 1D অ্যারে মেমোরি অ্যালোকেশন
+            const gray = new Uint8ClampedArray(w * h);
+            for (let i = 0; i < data.length; i += 4) {
+                gray[i / 4] = (data[i] * 0.299) + (data[i + 1] * 0.587) + (data[i + 2] * 0.114);
+            }
+
+            const blurredInverted = new Uint8ClampedArray(w * h);
+            const radius = parseInt(blurRadius);
+
+            // অপ্টিমাইজড বক্স ব্লার - মোবাইল পারফরম্যান্স বুস্টার
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    let sum = 0;
+                    let count = 0;
+                    
+                    for (let ky = -radius; ky <= radius; ky++) {
+                        const ny = y + ky;
+                        if (ny >= 0 && ny < h) {
+                            for (let kx = -radius; kx <= radius; kx++) {
+                                const nx = x + kx;
+                                if (nx >= 0 && nx < w) {
+                                    sum += gray[ny * w + nx];
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                    blurredInverted[y * w + x] = 255 - (sum / count);
+                }
+            }
+
+            // নিখুঁত কালার ডজ মিক্সিং (পেন্সিল টেক্সচার এবং শেড ফুটিয়ে তোলার জন্য)
+            for (let i = 0; i < gray.length; i++) {
+                const g = gray[i];
+                const b = blurredInverted[i];
+                
+                let blended = b === 255 ? 255 : (g * 255) / (255 - b);
+                if (blended > 255) blended = 255;
+
+                const pixelIdx = i * 4;
+                data[pixelIdx] = blended;     
+                data[pixelIdx + 1] = blended; 
+                data[pixelIdx + 2] = blended; 
+                data[pixelIdx + 3] = 255;     
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+            isRendering = false;
+        }
+
+        // ৩. সাধারণ ছবি দেখানোর ফাংশন
+        function drawNormal() {
+            if (!originalImage) return;
+            overlayCanvas.width = originalImage.width;
+            overlayCanvas.height = originalImage.height;
+            ctx.drawImage(originalImage, 0, 0, originalImage.width, originalImage.height);
+        }
+
+        // ৪. ফাইল লোডার ও অটো-ফিট পজিশন
+        imageLoader.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                originalImage = new Image();
+                originalImage.src = event.target.result;
+
+                originalImage.onload = function() {
+                    const viewWidth = viewContainer.clientWidth;
+                    const viewHeight = viewContainer.clientHeight;
+                    
+                    let imgWidth = viewWidth * 0.85;
+                    let imgHeight = (originalImage.height / originalImage.width) * imgWidth;
+                    
+                    interactiveContainer.style.width = imgWidth + 'px';
+                    interactiveContainer.style.height = imgHeight + 'px';
+                    
+                    currentX = (viewWidth - imgWidth) / 2;
+                    currentY = (viewHeight - imgHeight) / 2;
+                    currentScale = 1;
+                    
+                    updateTransform();
+                    interactiveContainer.style.display = 'block';
+                    
+                    if (currentMode === 'normal') {
+                        drawNormal();
+                    } else {
+                        processPencilSketch(sketchSlider.value);
+                    }
+                };
+            }
+            if(file) reader.readAsDataURL(file);
+        });
+
+        // ৫. রিয়েল-টাইম থ্রোটলড স্লাইডার লিসেনার (ল্যাগ মুক্ত ও স্মুথ)
+        sketchSlider.addEventListener('input', (e) => {
+            if (currentMode === 'sketch') {
+                // requestAnimationFrame ব্যবহার করে প্রসেসর লোড অপ্টিমাইজ করা হয়েছে
+                requestAnimationFrame(() => {
+                    processPencilSketch(e.target.value);
+                });
+            }
+        });
+
+        opacitySlider.addEventListener('input', function(e) {
+            requestAnimationFrame(() => {
+                interactiveContainer.style.opacity = e.target.value;
+            });
+        });
+
+        // ৬. মুড সুইচিং
+        btnNormal.addEventListener('click', () => {
+            currentMode = 'normal';
+            btnNormal.classList.add('active');
+            btnSketch.classList.remove('active');
+            sketchLabel.style.display = 'none';
+            drawNormal();
+        });
+
+        btnSketch.addEventListener('click', () => {
+            currentMode = 'sketch';
+            btnSketch.classList.add('active');
+            btnNormal.classList.remove('active');
+            sketchLabel.style.display = 'flex';
+            processPencilSketch(sketchSlider.value);
+        });
+
+        // ৭. ড্র্যাগ এবং জুম লজিক
+        let isDragging = false;
+        let currentX = 0, currentY = 0;
+        let startX, startY;
+        let currentScale = 1;
+        let startTouchDistance = 0;
+
+        function updateTransform() {
+            interactiveContainer.style.transform = `translate(${currentX}px, ${currentY}px) scale(${currentScale})`;
+        }
+
+        function startPointer(e) {
+            if (e.touches && e.touches.length === 2) {
+                isDragging = false;
+                startTouchDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+            } else {
+                isDragging = true;
+                let clientX = e.clientX || e.touches[0].clientX;
+                let clientY = e.clientY || e.touches[0].clientY;
+                startX = clientX - currentX;
+                startY = clientY - currentY;
+            }
+        }
+
+        function movePointer(e) {
+            if (isDragging) {
+                let clientX = e.clientX || e.touches[0].clientX;
+                let clientY = e.clientY || e.touches[0].clientY;
+                currentX = clientX - startX;
+                currentY = clientY - startY;
+                requestAnimationFrame(updateTransform);
+            } else if (e.touches && e.touches.length === 2) {
+                const distance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                if (startTouchDistance === 0) return;
+                
+                let factor = distance / startTouchDistance;
+                currentScale *= factor;
+                currentScale = Math.min(Math.max(0.15, currentScale), 6);
+                startTouchDistance = distance;
+                requestAnimationFrame(updateTransform);
+            }
+        }
+
+        function endPointer() {
+            isDragging = false;
+            startTouchDistance = 0;
+        }
+
+        interactiveContainer.addEventListener('mousedown', startPointer);
+        window.addEventListener('mousemove', movePointer);
+        window.addEventListener('mouseup', endPointer);
+
+        interactiveContainer.addEventListener('touchstart', startPointer, { passive: false });
+        window.addEventListener('touchmove', movePointer, { passive: false });
+        window.
+addEventListener('touchend', endPointer);
+
+        setupCamera();
+    </script>
+</body>
+</html>
